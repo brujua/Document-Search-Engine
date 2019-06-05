@@ -1,9 +1,9 @@
 import sys
-import uuid
 import struct
 import numpy as np
+import matplotlib.pyplot as plt
 from tqdm import tqdm
-from typing import List, Callable, Dict
+from typing import List
 from math import log2
 from classes.InvertedIndexItem import InvertedIndexItem
 
@@ -21,22 +21,15 @@ documents = []
 inverted_index = {}  # [InvertedIndexItem]
 INDEX_FILE_NAME = "index.bin"
 POSTING_FORMAT = "2I"
-POSTING_SIZE = 8
+POSTING_SIZE = 8  # bytes
+
 
 def main(*args):
     empty_words = get_empty_words(args[1])
     files = get_files(args[0])
     index(files, empty_words)
-    save_on_disk()
-    while True:
-        print("Enter Query: (or type", EXIT_QUERY, " )")
-        query = input()
-        if query == EXIT_QUERY:
-            break
-        result_docs = resolve_query(query, empty_words)
-        print("Documents: ")
-        for doc in result_docs[:MAX_RESULTS]:
-            print(doc.file_name)
+    save_index_to_disk()
+    calculate_overhead_stats()
 
 
 def index(files: List[str], empty_words: List[str]):
@@ -58,66 +51,28 @@ def index(files: List[str], empty_words: List[str]):
     progress_bar.close()
 
 
-def save_on_disk():
+def save_index_to_disk():
     offset = 0
     with open(INDEX_FILE_NAME, "wb") as file:
         for term in corpus_terms.values():
-            inverted_index[term.name] = InvertedIndexItem(term.name, term.doc_freq,offset)
+            inverted_index[term.name] = InvertedIndexItem(term.name, term.doc_freq, offset)
             for doc in term.documents:
+                documents[doc.id].add_overhead(POSTING_SIZE)
                 values = (doc.id, doc.get_freq(term))
                 packed_data = struct.pack(POSTING_FORMAT, *values)
                 file.write(packed_data)
                 offset += POSTING_SIZE
 
 
-def resolve_query(query: str, empty_words: List[str]) -> List[Document]:
-    query_tokens = tokenizar(query)
-    query_terms_with_duplicates = sacar_palabras_vacias(query_tokens, empty_words)
-    query_terms, query_vector = get_query_vector(query_terms_with_duplicates)
-    documents_vectors = get_documents_vectors(query_terms)
-    document_similitudes = {}
-    for doc, doc_vector in documents_vectors.items():
-        document_similitudes[doc] = calculate_similitude(query_vector, doc_vector)
-    return sorted(document_similitudes, key=document_similitudes.get, reverse=True)
-
-
-def get_query_vector(query_terms: List[str]) -> (List[str], List[float]):
-    query_term_freqs = {}
-    query_terms_aux = []
-    vector = []
-    max_freq = 1
-    for term in query_terms:
-        if term in corpus_terms:      # only consider terms that appear on the corpus
-            if term not in query_term_freqs:
-                query_term_freqs[term] = 1
-                query_terms_aux.append(term)
-            else:
-                query_term_freqs[term] += 1
-                if query_term_freqs[term] > max_freq:
-                    max_freq = query_term_freqs[term]
-    for term in query_terms_aux:
-        term_idf = corpus_terms[term].get_idf()
-        # Wq = 0.5 + 0.5 + TF / max(TF) * log (N / Ni)
-        weight = 0.5 + 0.5 * query_term_freqs[term] / max_freq * term_idf
-        vector.append(weight)
-    return query_terms_aux, vector
-
-
-def get_documents_vectors(query_terms: List[str]) -> Dict:
-    documents_vectors = {}
-    documents_of_interest = []
-    for term_name in query_terms:
-        docs = retrieve_docs(inverted_index[term_name])
-        for doc in corpus_terms[term_name].documents:
-            if doc not in documents_of_interest:
-                documents_of_interest.append(doc)
-    for doc in documents_of_interest:
-        vector = []
-        for term_name in query_terms:
-            term = corpus_terms[term_name]
-            vector.append(doc.get_weight(term))
-        documents_vectors[doc] = vector
-    return documents_vectors
+def calculate_overhead_stats():
+    overheads = []
+    for doc in documents:
+        overheads.append(doc.overhead)
+    plt.xlabel('Bytes')
+    plt.ylabel('Number of posting lists')
+    plt.title('Positing list size distribution')
+    plt.hist(overheads, bins=50)
+    plt.show()
 
 
 def retrieve_docs(term: InvertedIndexItem):

@@ -10,6 +10,7 @@ class Document:
     file_name: str
     terms: Dict
     id: int
+    overhead: int = 0
 
     def has_term(self, term: Term):
         term_freq = self.terms.get(term, 0)
@@ -22,6 +23,9 @@ class Document:
         if term not in self.terms:
             return 0
         return self.terms[term] * term.get_idf()
+
+    def add_overhead(self, overhead: int):
+        self.overhead += overhead
 
     def __str__(self):
         return "[" + self.file_name + " {" + self.terms.__str__() + "}]"
