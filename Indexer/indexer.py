@@ -1,3 +1,4 @@
+import os
 import sys
 import struct
 import numpy as np
@@ -9,7 +10,7 @@ from classes.InvertedIndexItem import InvertedIndexItem
 
 from classes.Document import Document
 from classes.Term import Term
-from tokenizer.tokenizer import tokenizar
+from tokenizer.tokenizer import tokenizar, TOKEN_MAX_LEN
 from tokenizer.tokenizer import sacar_palabras_vacias
 from utils import get_files
 
@@ -22,6 +23,8 @@ inverted_index = {}  # [InvertedIndexItem]
 INDEX_FILE_NAME = "index.bin"
 POSTING_FORMAT = "2I"
 POSTING_SIZE = 8  # bytes
+VOCABULARY_ITEM_SIZE = TOKEN_MAX_LEN + 8  # bytes (token_max_len characters each 1 byte, 4 bytes for doc_freq,
+# 4 bytes for offset
 
 
 def main(*args):
@@ -29,14 +32,14 @@ def main(*args):
     files = get_files(args[0])
     index(files, empty_words)
     save_index_to_disk()
-    calculate_overhead_stats()
+    show_overhead_stats()
 
 
 def index(files: List[str], empty_words: List[str]):
     print("indexing...")
     progress_bar = tqdm(total=len(files), unit="file")
     for file_name in files:
-        doc = Document(file_name, {}, len(documents))
+        doc = Document(file_name, {}, len(documents), os.path.getsize(file_name))
         documents.append(doc)
         with open(file_name, encoding="utf-8", errors="ignore") as file:
             tokens = tokenizar(file.read())
@@ -64,15 +67,34 @@ def save_index_to_disk():
                 offset += POSTING_SIZE
 
 
-def calculate_overhead_stats():
-    overheads = []
-    for doc in documents:
-        overheads.append(doc.overhead)
+def show_overhead_stats():
+    total_overhead = 0
+    posting_list_sizes = []
+    for term in corpus_terms.values():
+        posting_list_sizes.append(term.doc_freq * POSTING_SIZE)
+        total_overhead += term.doc_freq * POSTING_SIZE + VOCABULARY_ITEM_SIZE
+    # Plotting posting lists sizes distribution
     plt.xlabel('Bytes')
     plt.ylabel('Number of posting lists')
-    plt.title('Positing list size distribution')
-    plt.hist(overheads, bins=50)
+    plt.title('Posting list size distribution')
+    plt.hist(posting_list_sizes, bins=200)
     plt.show()
+
+    # calculating overhead per document
+    coll_size = 0
+    doc_overheads = []
+    for doc in documents:
+        doc_overheads.append(doc.overhead/doc.size)
+        coll_size += doc.size
+
+    # Plotting overhead per document distribution
+    plt.xlabel('Overhead/size in Bytes')
+    plt.ylabel('Number of documents')
+    plt.title('File')
+    plt.hist(doc_overheads)
+    plt.show()
+
+    print("Total Overhead:", total_overhead, "bytes", "from a collection of ", coll_size, "bytes total")
 
 
 def retrieve_docs(term: InvertedIndexItem):

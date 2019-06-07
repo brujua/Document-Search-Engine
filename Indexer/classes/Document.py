@@ -10,6 +10,7 @@ class Document:
     file_name: str
     terms: Dict
     id: int
+    size: int
     overhead: int = 0
 
     def has_term(self, term: Term):
