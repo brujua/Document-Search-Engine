@@ -1,11 +1,9 @@
 import os
 import sys
 import struct
-import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from typing import List
-from math import log2
 from classes.InvertedIndexItem import InvertedIndexItem
 
 from classes.Document import Document
@@ -16,15 +14,19 @@ from utils import get_files
 
 ERROR_ARGS = "Invalid Arguments. \nUsage: python " + sys.argv[0] + " <corpus-dir> <stop-words-file>"
 EXIT_QUERY = "--exit"
-MAX_RESULTS = 10
-corpus_terms = {}
-documents = []
-inverted_index = {}  # [InvertedIndexItem]
+ERROR_WRONG_QUERY_SYNTAX = "Query given has invalid syntax"
 INDEX_FILE_NAME = "index.bin"
+
+QUERY_OPERANDS = {"and": "and", "or": "or", "not": "not"}  # To support query operands in other languages: change values
 POSTING_FORMAT = "2I"
 POSTING_SIZE = 8  # bytes
 VOCABULARY_ITEM_SIZE = TOKEN_MAX_LEN + 8  # bytes (token_max_len characters each 1 byte, 4 bytes for doc_freq,
-# 4 bytes for offset
+# 4 bytes for offset)
+MAX_RESULTS = 20
+
+documents = []  # List[Document]
+terms_doc_dic = {}  # { term_name : Term, }
+vocabulary = {}  # { term_name : InvertedIndexItem, }
 
 
 def main(*args):
@@ -32,7 +34,19 @@ def main(*args):
     files = get_files(args[0])
     index(files, empty_words)
     save_index_to_disk()
-    show_overhead_stats()
+    # show_overhead_stats()
+    while True:
+        print("Enter Query: (or type", EXIT_QUERY, " )")
+        query = input()
+        if query == EXIT_QUERY:
+            break
+        try:
+            result_docs = resolve_query(query, empty_words)
+            print("Documents: ")
+            for doc in result_docs[:MAX_RESULTS]:
+                print(doc.file_name)
+        except SyntaxError as err:
+            print(err)
 
 
 def index(files: List[str], empty_words: List[str]):
@@ -45,20 +59,19 @@ def index(files: List[str], empty_words: List[str]):
             tokens = tokenizar(file.read())
         tokens = sacar_palabras_vacias(tokens, empty_words)
         for token in tokens:
-            term = corpus_terms.get(token, Term(token, set(), len(corpus_terms)))
-            corpus_terms[token] = term
+            term = terms_doc_dic.get(token, Term(token, set(), len(terms_doc_dic)))
+            terms_doc_dic[token] = term
             doc.has_term(term)
             term.found_in(doc)
         progress_bar.update(1)
-    calculate_idfs()
     progress_bar.close()
 
 
 def save_index_to_disk():
     offset = 0
     with open(INDEX_FILE_NAME, "wb") as file:
-        for term in corpus_terms.values():
-            inverted_index[term.name] = InvertedIndexItem(term.name, term.doc_freq, offset)
+        for term in terms_doc_dic.values():
+            vocabulary[term.name] = InvertedIndexItem(term.name, term.doc_freq, offset)
             for doc in term.documents:
                 documents[doc.id].add_overhead(POSTING_SIZE)
                 values = (doc.id, doc.get_freq(term))
@@ -67,10 +80,65 @@ def save_index_to_disk():
                 offset += POSTING_SIZE
 
 
+def resolve_query(query: str, empty_words: List[str]) -> List[Document]:
+    # remove empty words that are not "and", "or" or "not"
+    words = [w for w in tokenizar(query) if (w not in empty_words) or (w in QUERY_OPERANDS.values())]
+    docs = []
+    and_f = False
+    or_f = False
+    not_f = False
+    for i, word in enumerate(words):
+        if word == QUERY_OPERANDS["not"]:
+            not_f = True
+        elif word == QUERY_OPERANDS["or"]:
+            or_f = True
+        elif word == QUERY_OPERANDS["and"]:
+            and_f = True
+        else:
+            if i == 0:  # first word
+                docs = retrieve_docs(word)
+            elif and_f:
+                docs = apply_and(docs, retrieve_docs(word))
+                and_f = False
+            elif or_f:
+                docs = apply_or(docs, retrieve_docs(word))
+                or_f = False
+            elif not_f:
+                docs = apply_not(docs, retrieve_docs(word))
+            else:
+                raise SyntaxError(ERROR_WRONG_QUERY_SYNTAX)
+    return docs
+
+
+def apply_and(docs: List[Document], new_docs: List[Document]) -> List[Document]:
+    return [doc for doc in docs if doc in new_docs]
+
+
+def apply_or(docs: List[Document], new_docs: List[Document]) -> List[Document]:
+    return list(set(docs).union(new_docs))
+
+
+def apply_not(docs: List[Document], new_docs: List[Document]) -> List[Document]:
+    return [doc for doc in docs if doc not in new_docs]
+
+
+def retrieve_docs(word: str):
+    docs = []
+    term = vocabulary.get(word)
+    if term is not None:
+        with open(INDEX_FILE_NAME, "rb") as file:
+            for doc_number in range(0, term.doc_freq):
+                file.seek(term.offset + (POSTING_SIZE * doc_number))
+                content = file.read(POSTING_SIZE)
+                doc_id, term_freq = struct.unpack(POSTING_FORMAT, content)
+                docs.append(documents[doc_id])
+    return docs
+
+
 def show_overhead_stats():
     total_overhead = 0
     posting_list_sizes = []
-    for term in corpus_terms.values():
+    for term in terms_doc_dic.values():
         posting_list_sizes.append(term.doc_freq * POSTING_SIZE)
         total_overhead += term.doc_freq * POSTING_SIZE + VOCABULARY_ITEM_SIZE
     # Plotting posting lists sizes distribution
@@ -95,26 +163,6 @@ def show_overhead_stats():
     plt.show()
 
     print("Total Overhead:", total_overhead, "bytes", "from a collection of ", coll_size, "bytes total")
-
-
-def retrieve_docs(term: InvertedIndexItem):
-    docs = []
-    with open(INDEX_FILE_NAME, "rb") as file:
-        for doc_number in range(0, term.doc_freq):
-            file.seek(term.offset + (POSTING_SIZE * doc_number))
-            content = file.read(POSTING_SIZE)
-            docs.append(struct.unpack(POSTING_FORMAT, content))
-    return docs
-
-
-def calculate_similitude(query_vector: List[float], doc_vector: List[float]):
-    #  Angle between vectors = D . Q / |D| * |Q|
-    return np.dot(query_vector, doc_vector) / (np.linalg.norm(query_vector) * np.linalg.norm(doc_vector))
-
-
-def calculate_idfs():
-    for term in corpus_terms.values():
-        term.set_idf(log2(len(documents) / term.doc_freq))
 
 
 def get_empty_words(file_name: str):

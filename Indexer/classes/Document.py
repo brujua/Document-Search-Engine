@@ -33,3 +33,9 @@ class Document:
 
     def __hash__(self):
         return self.id
+
+    def __eq__(self, other):
+        if not isinstance(other, Document):
+            # don't attempt to compare against unrelated types
+            return NotImplemented
+        return self.id == other.id
