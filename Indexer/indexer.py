@@ -3,7 +3,7 @@ import sys
 import struct
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from typing import List
+from typing import List, Set
 from classes.InvertedIndexItem import InvertedIndexItem
 
 from classes.Document import Document
@@ -110,21 +110,59 @@ def resolve_query(query: str, empty_words: List[str] = []) -> List[Document]:
     return docs
 
 
-def apply_and(docs: List[Document], new_docs: List[Document]) -> List[Document]:
-    return [doc for doc in docs if doc in new_docs]
+def resolve_query_in_ram(query: str) -> Set[Document]:
+    # remove empty words that are not "and", "or" or "not"
+    words = tokenizar(query)
+    docs = set()
+    and_f = False
+    or_f = False
+    not_f = False
+    for i, word in enumerate(words):
+        if word == QUERY_OPERANDS["not"]:
+            not_f = True
+        elif word == QUERY_OPERANDS["or"]:
+            or_f = True
+        elif word == QUERY_OPERANDS["and"]:
+            and_f = True
+        else:
+            if i == 0:  # first word
+                docs = retrieve_docs_ram(word)
+            elif and_f:
+                docs = apply_and(docs, retrieve_docs_ram(word))
+                and_f = False
+            elif or_f:
+                docs = apply_or(docs, retrieve_docs_ram(word))
+                or_f = False
+            elif not_f:
+                docs = apply_not(docs, retrieve_docs_ram(word))
+            else:
+                raise SyntaxError(ERROR_WRONG_QUERY_SYNTAX)
+    return docs
 
 
-def apply_or(docs: List[Document], new_docs: List[Document]) -> List[Document]:
-    return list(set(docs).union(new_docs))
+def retrieve_docs_ram(word: str) -> Set[Document]:
+    docs = set()
+    term = terms_doc_dic.get(word)
+    if term is not None:
+        docs = term.documents
+    return docs
 
 
-def apply_not(docs: List[Document], new_docs: List[Document]) -> List[Document]:
-    return [doc for doc in docs if doc not in new_docs]
+def apply_and(docs: Set[Document], new_docs: Set[Document]) -> Set[Document]:
+    return docs.intersection(new_docs)
 
 
-def retrieve_docs(word: str):
+def apply_or(docs: Set[Document], new_docs: Set[Document]) -> Set[Document]:
+    return docs.union(new_docs)
+
+
+def apply_not(docs: Set[Document], new_docs: Set[Document]) -> Set[Document]:
+    return docs.difference(new_docs)
+
+
+def retrieve_docs(word: str) -> Set[Document]:
     posting_parts = 2  # the postings are (doc_id, tf)
-    docs = []
+    docs = set()
     term = vocabulary.get(word)
     if term is not None:
         struct_format = '{}I'.format(term.doc_freq * posting_parts)
@@ -133,7 +171,7 @@ def retrieve_docs(word: str):
             content = file.read(POSTING_SIZE * term.doc_freq)
             unpacked_data = struct.unpack(struct_format, content)
         for doc_id in unpacked_data[::posting_parts]:
-            docs.append(documents[doc_id])
+            docs.add(documents[doc_id])
     return docs
 
 
