@@ -80,7 +80,7 @@ def save_index_to_disk():
                 offset += POSTING_SIZE
 
 
-def resolve_query(query: str, empty_words: List[str]) -> List[Document]:
+def resolve_query(query: str, empty_words: List[str] = []) -> List[Document]:
     # remove empty words that are not "and", "or" or "not"
     words = [w for w in tokenizar(query) if (w not in empty_words) or (w in QUERY_OPERANDS.values())]
     docs = []
@@ -123,15 +123,17 @@ def apply_not(docs: List[Document], new_docs: List[Document]) -> List[Document]:
 
 
 def retrieve_docs(word: str):
+    posting_parts = 2  # the postings are (doc_id, tf)
     docs = []
     term = vocabulary.get(word)
     if term is not None:
+        struct_format = '{}I'.format(term.doc_freq * posting_parts)
         with open(INDEX_FILE_NAME, "rb") as file:
-            for doc_number in range(0, term.doc_freq):
-                file.seek(term.offset + (POSTING_SIZE * doc_number))
-                content = file.read(POSTING_SIZE)
-                doc_id, term_freq = struct.unpack(POSTING_FORMAT, content)
-                docs.append(documents[doc_id])
+            file.seek(term.offset)
+            content = file.read(POSTING_SIZE * term.doc_freq)
+            unpacked_data = struct.unpack(struct_format, content)
+        for doc_id in unpacked_data[::posting_parts]:
+            docs.append(documents[doc_id])
     return docs
 
 
