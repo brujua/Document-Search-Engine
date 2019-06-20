@@ -1,7 +1,6 @@
 import os
 import sys
 import struct
-import matplotlib.pyplot as plt
 from tqdm import tqdm
 from typing import List, Set
 from classes.InvertedIndexItem import InvertedIndexItem
@@ -34,7 +33,6 @@ def main(*args):
     files = get_files(args[0])
     index(files, empty_words)
     save_index_to_disk()
-    # show_overhead_stats()
     while True:
         print("Enter Query: (or type", EXIT_QUERY, " )")
         query = input()
@@ -81,6 +79,16 @@ def save_index_to_disk():
 
 
 def resolve_query(query: str, empty_words: List[str] = []) -> List[Document]:
+    """
+    Resolves a query with the following format: r"Term operand Term [operand Term]+".
+    Resolving from left to right, retrieving the docs of the first term, then applying the operand to the
+    docs of the second term and so forth.
+
+    :param query: boolean query.
+    :param empty_words: default empty.
+    :return The list of documents that satisfies the given query.
+    :raises SyntaxError: If the query doesn't comply with the format
+    """
     # remove empty words that are not "and", "or" or "not"
     words = [w for w in tokenizar(query) if (w not in empty_words) or (w in QUERY_OPERANDS.values())]
     docs = []
@@ -110,44 +118,6 @@ def resolve_query(query: str, empty_words: List[str] = []) -> List[Document]:
     return docs
 
 
-def resolve_query_in_ram(query: str) -> Set[Document]:
-    # remove empty words that are not "and", "or" or "not"
-    words = tokenizar(query)
-    docs = set()
-    and_f = False
-    or_f = False
-    not_f = False
-    for i, word in enumerate(words):
-        if word == QUERY_OPERANDS["not"]:
-            not_f = True
-        elif word == QUERY_OPERANDS["or"]:
-            or_f = True
-        elif word == QUERY_OPERANDS["and"]:
-            and_f = True
-        else:
-            if i == 0:  # first word
-                docs = retrieve_docs_ram(word)
-            elif and_f:
-                docs = apply_and(docs, retrieve_docs_ram(word))
-                and_f = False
-            elif or_f:
-                docs = apply_or(docs, retrieve_docs_ram(word))
-                or_f = False
-            elif not_f:
-                docs = apply_not(docs, retrieve_docs_ram(word))
-            else:
-                raise SyntaxError(ERROR_WRONG_QUERY_SYNTAX)
-    return docs
-
-
-def retrieve_docs_ram(word: str) -> Set[Document]:
-    docs = set()
-    term = terms_doc_dic.get(word)
-    if term is not None:
-        docs = term.documents
-    return docs
-
-
 def apply_and(docs: Set[Document], new_docs: Set[Document]) -> Set[Document]:
     return docs.intersection(new_docs)
 
@@ -173,36 +143,6 @@ def retrieve_docs(word: str) -> Set[Document]:
         for doc_id in unpacked_data[::posting_parts]:
             docs.add(documents[doc_id])
     return docs
-
-
-def show_overhead_stats():
-    total_overhead = 0
-    posting_list_sizes = []
-    for term in terms_doc_dic.values():
-        posting_list_sizes.append(term.doc_freq * POSTING_SIZE)
-        total_overhead += term.doc_freq * POSTING_SIZE + VOCABULARY_ITEM_SIZE
-    # Plotting posting lists sizes distribution
-    plt.xlabel('Bytes')
-    plt.ylabel('Number of posting lists')
-    plt.title('Posting list size distribution')
-    plt.hist(posting_list_sizes, bins=200)
-    plt.show()
-
-    # calculating overhead per document
-    coll_size = 0
-    doc_overheads = []
-    for doc in documents:
-        doc_overheads.append(doc.overhead/doc.size)
-        coll_size += doc.size
-
-    # Plotting overhead per document distribution
-    plt.xlabel('Overhead/size in Bytes')
-    plt.ylabel('Number of documents')
-    plt.title('File')
-    plt.hist(doc_overheads)
-    plt.show()
-
-    print("Total Overhead:", total_overhead, "bytes", "from a collection of ", coll_size, "bytes total")
 
 
 def get_empty_words(file_name: str):
