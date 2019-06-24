@@ -1,5 +1,5 @@
 from typing import List
-from os import listdir
+from os import listdir, stat
 from os.path import isdir
 
 
@@ -13,3 +13,8 @@ def get_files(path: str) -> List[str]:
     return [file for fileOrDir in listdir(path) for file in get_files(path + '/' + fileOrDir)]
     # return list of each file returned by the recursive call getFiles(fileOrDir) on
     # each fileOrDir in listdir(path)
+
+
+def get_file_size(filename):
+    st = stat(filename)
+    return st.st_size
