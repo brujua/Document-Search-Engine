@@ -1,4 +1,4 @@
-# Documents-Search-Engine
+# Document-Search-Engine
 Indexer of documents that supports a boolean query language.
 
 ## Utilization
